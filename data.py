@@ -31,11 +31,34 @@ def get_bolling_band(df, n, k, stockA, stockB):
     return df
 
 
+def get_signal(df):
+    signal = []
+    df.sort_index(ascending=False, inplace=True)
+    spread = df["spread"]
+    upper_band = df["upper_band"]
+    lower_band = df["lower_band"]
+    for i in range(len(df)-1):
+        if spread[i] > upper_band[i] and spread[i+1] <= upper_band[i+1]:
+            signal.append("x_up")
+        elif spread[i] < lower_band[i] and spread[i+1] >= upper_band[i+1]:
+            signal.append("x_down")
+        else:
+            signal.append("false")
+    df = df.drop(df.index[-1])
+    df = df.assign(signal=pd.Series(signal, index=df.index))
+    return df
+
+
 stockA = "pep"
 stockB = "ko"
 
 data_after_cal = get_data_csv("pep_ko_ivv.csv", stockA, stockB)
 
-bolling_data = get_bolling_band(data_after_cal, 7, 2, stockA, stockB)
+bolling_data = get_bolling_band(data_after_cal, 7, 0.5, stockA, stockB)
 
-print(bolling_data)
+signal_data = get_signal(bolling_data)
+
+series1 = signal_data.loc[signal_data["signal"] != "false"]
+
+print(series1)
+
