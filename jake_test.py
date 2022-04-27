@@ -1,4 +1,4 @@
-from data import *
+from blotter import *
 
 filename = "pep_ko_ivv.csv"
 n = 7

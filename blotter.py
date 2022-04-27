@@ -3,31 +3,33 @@ import statistics as stats
 import numpy as np
 
 
-def get_data_csv(filename):
+def onboard_historical_price_data(filename):
     # reads a csv that has a date column and returns it as a pandas DF
     df = pd.read_csv(filename, index_col="Date")
     df.sort_index(ascending=True, inplace=True)
     return df
 
 
-def get_spread(filename, stock_a, stock_b):
+def get_spread(hpd, stock_a, stock_b):
     # adds three new columns to a csv of date-indexed prices:
     # t_price_A: high+low+close price of stock A / 3
     # t_price_B: high+low+close price of stock B / 3
     # spread: difference between t-price of A wrt B
-    df = get_data_csv(filename)
-    df["t_price_A"] = (df[stock_a + "_High"] + df[stock_a + "_Low"] + df[stock_a + "_Close"]) / 3
-    df["t_price_B"] = (df[stock_b + "_High"] + df[stock_b + "_Low"] + df[stock_b + "_Close"]) / 3
-    df["spread"] = df["t_price_A"] - df["t_price_B"]
-    return df
+
+    hpd["t_price_A"] = (hpd[stock_a + "_High"] + hpd[stock_a + "_Low"] + hpd[
+        stock_a + "_Close"]) / 3
+    hpd["t_price_B"] = (hpd[stock_b + "_High"] + hpd[stock_b + "_Low"] + hpd[
+        stock_b + "_Close"]) / 3
+    hpd["spread"] = hpd["t_price_A"] - hpd["t_price_B"]
+    return hpd
 
 
-def get_bolling_band(filename, n, k, stock_a, stock_b):
+def get_bolling_band(hpd_with_spread, n, k, stock_a, stock_b):
     # Accepts the filename of a date-indexed CSV of historical prices, plus
     #   n and k, plus the symbols of two stocks A and B
     # Returns a pandas DF containing:
     # t_price_a, t_price_b, spread, upper_band, lower_band
-    df = get_spread(filename, stock_a, stock_b)
+    df = hpd_with_spread
     history = []
     upper_band = []
     lower_band = []
@@ -68,11 +70,11 @@ def get_full_signal(filename, n, k, stock_a, stock_b):
     return df
 
 
-def calculate_entry_orders(filename, n, k, stock_a, stock_b, size_a, size_b,
+def calculate_entry_orders(full_signal, stock_a, stock_b, size_a, size_b,
                            trip, lmt_price_a, lmt_status_a, lmt_price_b,
                            lmt_status_b):
     # returns a blotter containing all entry orders given a set of data.
-    df = get_full_signal(filename, n, k, stock_a, stock_b)
+    df = full_signal
     df = df.reset_index()
     series = df[["Date", stock_a + "_Open", stock_b + "_Open"]]
     signal = df["signal"]
@@ -154,30 +156,43 @@ def calculate_entry_orders(filename, n, k, stock_a, stock_b, size_a, size_b,
                     }
                 )]
             )
-
+    entry_blotter = entry_blotter.set_index("DATE")
     return entry_blotter
 
-
-if __name__ == "__main__":
-    file_name = "pep_ko_ivv.csv"
-    stockA = "pep"
-    stockB = "ko"
-
-    #  parameters:
-    sizeA = 1000
-    sizeB = 1000
-    moving_average_num = 7
-    std_level = 0.5   # when: try k = 2, only x_up signal => means only 1 entry  => so we need to set exit
-                      # when: k > 2.1, no signal
-    lmt_priceA = 'N/A'
-    lmt_statusA = 'Filled'
-    lmt_priceB = 'N/A'
-    lmt_statusB = 'Filled'
-
-    # data & table
-    # all_data = get_full_signal(file_name, moving_average_num, std_level, stockA, stockB)
-    calculate_entry_orders(file_name, moving_average_num, std_level, stockA, stockB, sizeA, sizeB,
-      "Entry",
-              lmt_priceA, lmt_statusA, lmt_priceB, lmt_statusB)
+# def calculate_exit_orders(entry_orders, historical_price_data, timeout,
+#                           stoploss):
+    # Accepts:
+    # entry_orders: your blotter of all entry orders; i.e., the df that
+    #    is returned by calculate_entry_orders().
+    # historical_price_data: the date-indexed DF returned by onboard_historical_price_dat
+    # timeout: an integer. if an order stays open for this many periods (days),
+    #   then it is closed using a market order at the end of the day. You get
+    #   the CLOSE price for the fill price.
+    # stoploss: a float (percentage). For example, you BOUGHT pep and put
+    # out a limit order to SELL, but the price dropped and the SELL order never
+    # filled. if, over the next {timeout} days, the LOW price of pep is LESS than
+    # entry_price*(1-stoploss), then you know that your stoploss would ahve
+    # triggered on that day, and you would have entered a market order to close
+    # the position at a price of entry_price*(1-stoploss). And vice versa for
+    # shorts.
 
 
+historical_price_data = onboard_historical_price_data('pep_ko_ivv.csv')
+hpd_w_spread = get_spread(historical_price_data, 'pep', 'ko')
+bbands = get_bolling_band(hpd_w_spread, 7, 0.5, 'pep', 'ko')
+full_signal = get_full_signal(bbands, 7, 0.5, 'pep', 'ko')
+entry_orders = calculate_entry_orders(full_signal, 'pep', 'ko', 1000, 1000,
+                                      'Entry', 'N/A', 'N/A', 'FILLED', 'FILLED')
+entry_orders.to_csv('../entry_orders.csv')
+
+# MAGIKARP's ASSIGMENT:
+# 1) write calculate_exit_orders() so that the following code works. (must have)
+# 2) Make yourself a cool background, or a logo, or something with a Magikarp
+# in it. I'll work that into your website :) (optional)
+
+exit_orders = calculate_exit_orders(entry_orders, historical_price_data,
+                                    timeout, stoploss)
+exit_orders.to_csv('../exit_orders.csv')
+
+# pd.concat() exit orders and entry orders by ROW, sort by date... and that's
+# your blotter. a complete record of trades you WOULD have made.
