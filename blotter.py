@@ -224,7 +224,7 @@ def calculate_force_exit_orders(entry_orders, historical_price_data, timeout, st
     print(exit_df)
     return exit_df
 
-def calculate_exit_orders(entry_orders, full_signal, timeout, stoploss):
+def calculate_exit_orders(entry_orders, full_signal, timeout, stoploss, historical_price_data):
     exit_df = pd.DataFrame(columns=["DATE", "SYMBOL", "ACTION", "SIZE",
                                     "PRICE", "TRIP", "LMT_PRICE",
                                     "STATUS"])
@@ -239,22 +239,98 @@ def calculate_exit_orders(entry_orders, full_signal, timeout, stoploss):
             if full_signal.index[j] != entry_orders.index[i]:
                 continue;
             else:
+                interval = 0
                 for k in range(timeout):
+                    interval = interval + 1
                     row = j+k+1
+
+                    entry_price_pep = entry_orders.iloc[i]['PRICE']
+                    entry_price_ko = entry_orders.iloc[i+1]['PRICE']
+
                     spread = full_signal.iloc[row]['spread']
                     upper = full_signal.iloc[row]['upper_band']
                     lower = full_signal.iloc[row]['lower_band']
+                    price_p = full_signal.iloc[row + 1]['pep_Open']
+                    price_k = full_signal.iloc[row + 1]['ko_Open']
+
+                    if full_signal.iloc[j-1]['signal'] == "x_up":
+                        loss_price_p = entry_price_pep * (1+stoploss)
+                        loss_price_k = entry_price_pep * (1-stoploss)
+                        if (price_p >= loss_price_p) & (price_k <= loss_price_k):
+                            exit_df = pd.concat(
+                                [exit_df, pd.DataFrame(
+                                    {
+                                        "DATE": [full_signal.index[row + 1]],
+                                        "SYMBOL": [entry_orders.iloc[i]['SYMBOL']],
+                                        "ACTION": [action_pep],
+                                        "SIZE": [entry_orders.iloc[i]['SIZE']],
+                                        "PRICE": [price_p],
+                                        "TRIP": ["Exit"],
+                                        "LMT_PRICE": ['N/A'],
+                                        "STATUS": ['FILLED']
+                                    }
+                                )]
+                            )
+                            exit_df = pd.concat(
+                                [exit_df, pd.DataFrame(
+                                    {
+                                        "DATE": [full_signal.index[row + 1]],
+                                        "SYMBOL": [entry_orders.iloc[i + 1]['SYMBOL']],
+                                        "ACTION": [action_ko],
+                                        "SIZE": [entry_orders.iloc[i + 1]['SIZE']],
+                                        "PRICE": [price_k],
+                                        "TRIP": ['Exit'],
+                                        "LMT_PRICE": ['N/A'],
+                                        "STATUS": ['FILLED']
+                                    }
+                                )]
+
+                            )
+                            break
+
+                    elif full_signal.iloc[j-1]['signal'] == "x_down":
+                        loss_price_p = entry_price_pep * (1 - stoploss)
+                        loss_price_k = entry_price_pep * (1 + stoploss)
+                        if (price_p <= loss_price_p) & (price_k >= loss_price_k):
+                            exit_df = pd.concat(
+                                [exit_df, pd.DataFrame(
+                                    {
+                                        "DATE": [full_signal.index[row + 1]],
+                                        "SYMBOL": [entry_orders.iloc[i]['SYMBOL']],
+                                        "ACTION": [action_pep],
+                                        "SIZE": [entry_orders.iloc[i]['SIZE']],
+                                        "PRICE": [price_p],
+                                        "TRIP": ["Exit"],
+                                        "LMT_PRICE": ['N/A'],
+                                        "STATUS": ['FILLED']
+                                    }
+                                )]
+                            )
+                            exit_df = pd.concat(
+                                [exit_df, pd.DataFrame(
+                                    {
+                                        "DATE": [full_signal.index[row + 1]],
+                                        "SYMBOL": [entry_orders.iloc[i + 1]['SYMBOL']],
+                                        "ACTION": [action_ko],
+                                        "SIZE": [entry_orders.iloc[i + 1]['SIZE']],
+                                        "PRICE": [price_k],
+                                        "TRIP": ['Exit'],
+                                        "LMT_PRICE": ['N/A'],
+                                        "STATUS": ['FILLED']
+                                    }
+                                )]
+
+                            )
+                            break
+
 
                     if (spread < upper) & (spread > lower):
-                        price_p = full_signal.iloc[row + 1]['pep_Open']
-                        price_k = full_signal.iloc[row + 1]['ko_Open']
                         if full_signal.iloc[j-1]['signal'] == "x_up":
                             action_pep = "BUY"
                             action_ko = "SELL"
                         elif full_signal.iloc[j-1]['signal'] == "x_down":
                             action_pep = "SELL"
                             action_ko = "BUY"
-
                         exit_df = pd.concat(
                             [exit_df, pd.DataFrame(
                                 {
@@ -285,6 +361,52 @@ def calculate_exit_orders(entry_orders, full_signal, timeout, stoploss):
 
                         )
                         break;
+                if interval >= timeout:
+
+                    if full_signal.iloc[j - 1]['signal'] == "x_up":
+                        action_pep = "BUY"
+                        action_ko = "SELL"
+                    elif full_signal.iloc[j - 1]['signal'] == "x_down":
+                        action_pep = "SELL"
+                        action_ko = "BUY"
+
+                    date_timeout = full_signal.index[j+timeout]
+
+                    exit_df = pd.concat(
+                        [exit_df, pd.DataFrame(
+                            {
+                                "DATE": [full_signal.index[j+timeout]],
+                                "SYMBOL": [entry_orders.iloc[i]['SYMBOL']],
+                                "ACTION": [action_pep],
+                                "SIZE": [entry_orders.iloc[i]['SIZE']],
+                                "PRICE": [historical_price_data.at[date_timeout, entry_orders.iloc[i]['SYMBOL']+'_Close']],
+                                "TRIP": ["Exit"],
+                                "LMT_PRICE": ['N/A'],
+                                "STATUS": ['FILLED']
+                            }
+                        )]
+                    )
+                    exit_df = pd.concat(
+                        [exit_df, pd.DataFrame(
+                            {
+                                "DATE": [full_signal.index[j+timeout]],
+                                "SYMBOL": [entry_orders.iloc[i + 1]['SYMBOL']],
+                                "ACTION": [action_ko],
+                                "SIZE": [entry_orders.iloc[i + 1]['SIZE']],
+                                "PRICE": [historical_price_data.at[date_timeout, entry_orders.iloc[i+1]['SYMBOL']+'_Close']],
+                                "TRIP": ['Exit'],
+                                "LMT_PRICE": ['N/A'],
+                                "STATUS": ['FILLED']
+                            }
+                        )]
+
+                    )
+                    break
+
+
+
+
+
 
     exit_df.set_index("DATE", inplace=True)
     return exit_df
@@ -297,7 +419,7 @@ full_signal = get_full_signal(bbands)
 full_signal.to_csv('signal.csv')
 entry_orders = calculate_entry_orders(full_signal, 'pep', 'ko', 1000, 1000,
                                       'N/A', 'FILLED', 'N/A', 'FILLED')
-exit_orders = calculate_exit_orders(entry_orders, full_signal, 20, 0.3)
+exit_orders = calculate_exit_orders(entry_orders, full_signal, 2, 0.3, historical_price_data)
 
 whole_df = pd.concat([entry_orders, exit_orders])
 whole_df.sort_index(ascending=True, inplace=True)
