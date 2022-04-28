@@ -51,7 +51,7 @@ def get_bolling_band(hpd_with_spread, n, k, stock_a, stock_b):
 def get_full_signal(hpd_with_bolling):
     # takes in the same params as above
     # returns a date-indexed pandas df, columns:
-    #   pep_Open, ko_Open, pep_Close, ko_Close, spread, upper_band, lower_band, signal
+    #   pep_Open, ko_Open, spread, upper_band, lower_band, signal
     df = hpd_with_bolling
     df['signal'] = np.where((df['spread'] > df['upper_band']) & (df['spread'].shift(1) <= df['upper_band'].shift(1)), "x_up", "false")
     df['signal'] = np.where((df['spread'] < df['lower_band']) & (df['spread'].shift(1) >= df['lower_band'].shift(1)), "x_down", df['signal'])
@@ -61,7 +61,7 @@ def get_full_signal(hpd_with_bolling):
 
 
 def calculate_entry_orders(fsignal, stock_a, stock_b, size_a, size_b,
-                           trip, lmt_price_a, lmt_status_a, lmt_price_b,
+                           lmt_price_a, lmt_status_a, lmt_price_b,
                            lmt_status_b):
     # returns a blotter containing all entry orders given a set of data.
     df = fsignal
@@ -73,36 +73,34 @@ def calculate_entry_orders(fsignal, stock_a, stock_b, size_a, size_b,
 
     temp = pd.DataFrame(series)
     temp = temp.assign(signal=pd.Series(signals, index=temp.index))
-    entry = temp.loc[temp["signal"] != "false"]
-    entry.set_index("Date", inplace=True, drop=True)
+
+    temp.set_index("Date", inplace=True, drop=True)
 
     entry_blotter = pd.DataFrame(columns=["DATE", "SYMBOL", "ACTION", "SIZE",
                                           "PRICE", "TRIP", "LMT_PRICE",
                                           "STATUS"])
 
     position = 0
-    for i in range(len(entry)):
-        signal = entry.iloc[i]['signal']
+    for i in range(len(temp)):
+        signal = temp.iloc[i]['signal']
         trip = "Entry"
+        if signal == "x_up":
+            action_a = "SELL"
+            action_b = "BUY"
+        elif signal == "x_down":
+            action_a = "BUY"
+            action_b = "SELL"
         # up: buy ko, sell pepsi (buy B (low), sell A (high))
-        if ((position == 0 or position == -1) and signal == "x_up") or ((position == 0 or position == 1) and signal == "x_down"):
+        if (position != 1 and signal == "x_up") or (position != -1 and signal == "x_down"):
             # up: buy ko, sell pepsi (buy B (low), sell A (high))
-            if (position == 0 or position == -1) and signal == "x_up":
-                position = 1
-                action_a = "SELL"
-                action_b = "BUY"
-            else:
-                position = -1
-                action_a = "BUY"
-                action_b = "SELL"
             entry_blotter = pd.concat(
                 [entry_blotter, pd.DataFrame(
                     {
-                        "DATE": [entry.index[i]],
+                        "DATE": [temp.index[i]],
                         "SYMBOL": [stock_a],
                         "ACTION": [action_a],
                         "SIZE": [size_a],
-                        "PRICE": [entry.iloc[i][stock_a + "_Open"]],
+                        "PRICE": [temp.iloc[i][stock_a + "_Open"]],
                         "TRIP": [trip],
                         "LMT_PRICE": [lmt_price_a],
                         "STATUS": [lmt_status_a]
@@ -112,17 +110,23 @@ def calculate_entry_orders(fsignal, stock_a, stock_b, size_a, size_b,
             entry_blotter = pd.concat(
                 [entry_blotter, pd.DataFrame(
                     {
-                        "DATE": [entry.index[i]],
+                        "DATE": [temp.index[i]],
                         "SYMBOL": [stock_b],
                         "ACTION": [action_b],
                         "SIZE": [size_b],
-                        "PRICE": [entry.iloc[i][stock_b + "_Open"]],
+                        "PRICE": [temp.iloc[i][stock_b + "_Open"]],
                         "TRIP": [trip],
                         "LMT_PRICE": [lmt_price_b],
                         "STATUS": [lmt_status_b]
                     }
                 )]
             )
+        if signal == "x_up":
+            position = 1
+        elif signal == "x_down":
+            position = -1
+        elif signal == "false":
+            position = 0
     entry_blotter = entry_blotter.set_index("DATE")
     return entry_blotter
 
@@ -142,16 +146,17 @@ def calculate_exit_orders(entry_orders, historical_price_data, timeout, stoploss
     # triggered on that day, and you would have entered a market order to close
     # the position at a price of entry_price*(1-stoploss). And vice versa for
     # shorts.
-    exit_orders = pd.DataFrame()
-    return exit_orders
+    exit_blotter = pd.DataFrame()
+    return exit_blotter
 
 
 historical_price_data = onboard_historical_price_data('pep_ko_ivv.csv')
 hpd_w_spread = get_spread(historical_price_data, 'pep', 'ko')
 bbands = get_bolling_band(hpd_w_spread, 20, 2, 'pep', 'ko')
 full_signal = get_full_signal(bbands)
+full_signal.to_csv('../signal.csv')
 entry_orders = calculate_entry_orders(full_signal, 'pep', 'ko', 1000, 1000,
-                                      'Entry', 'N/A', 'N/A', 'FILLED', 'FILLED')
+                                      'N/A', 'FILLED', 'N/A', 'FILLED')
 entry_orders.to_csv('../entry_orders.csv')
 
 # MAGIKARP's ASSIGMENT:
