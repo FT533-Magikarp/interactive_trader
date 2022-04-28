@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pandas as pd
 import statistics as stats
 import numpy as np
@@ -56,7 +58,6 @@ def get_full_signal(hpd_with_bolling):
     df['signal'] = np.where((df['spread'] > df['upper_band']) & (df['spread'].shift(1) <= df['upper_band'].shift(1)), "x_up", "false")
     df['signal'] = np.where((df['spread'] < df['lower_band']) & (df['spread'].shift(1) >= df['lower_band'].shift(1)), "x_down", df['signal'])
     df = df.drop(df.index[0])
-    print(df)
     return df
 
 
@@ -223,44 +224,95 @@ def calculate_force_exit_orders(entry_orders, historical_price_data, timeout, st
     print(exit_df)
     return exit_df
 
+def calculate_exit_orders(entry_orders, full_signal, timeout, stoploss):
+    exit_df = pd.DataFrame(columns=["DATE", "SYMBOL", "ACTION", "SIZE",
+                                    "PRICE", "TRIP", "LMT_PRICE",
+                                    "STATUS"])
 
-def calculate_exit_orders(entry_orders, historical_price_data, timeout, stoploss):
-    # Accepts:
-    # entry_orders: your blotter of all entry orders; i.e., the df that
-    #    is returned by calculate_entry_orders().
-    # historical_price_data: the date-indexed DF returned by onboard_historical_price_data
-    # timeout: an integer. if an order stays open for this many periods (days),
-    #   then it is closed using a market order at the end of the day. You get
-    #   the CLOSE price for the fill price.
-    # stoploss: a float (percentage). For example, you BOUGHT pep and put
-    # out a limit order to SELL, but the price dropped and the SELL order never
-    # filled. if, over the next {timeout} days, the LOW price of pep is LESS than
-    # entry_price*(1-stoploss), then you know that your stoploss would ahve
-    # triggered on that day, and you would have entered a market order to close
-    # the position at a price of entry_price*(1-stoploss). And vice versa for
-    # shorts.
-    exit_blotter = pd.DataFrame()
-    return exit_blotter
+    for i in range(0, len(entry_orders), 2):
+        count = 0
+        action_pep = "BUY"
+        action_ko = "SELL"
+        price_p = 0
+        price_k = 0
+        for j in range(len(full_signal)):
+            if full_signal.index[j] != entry_orders.index[i]:
+                continue;
+            else:
+                for k in range(timeout):
+                    row = j+k+1
+                    spread = full_signal.iloc[row]['spread']
+                    upper = full_signal.iloc[row]['upper_band']
+                    lower = full_signal.iloc[row]['lower_band']
+
+                    if (spread < upper) & (spread > lower):
+                        price_p = full_signal.iloc[row + 1]['pep_Open']
+                        price_k = full_signal.iloc[row + 1]['ko_Open']
+                        if full_signal.iloc[j-1]['signal'] == "x_up":
+                            action_pep = "BUY"
+                            action_ko = "SELL"
+                        elif full_signal.iloc[j-1]['signal'] == "x_down":
+                            action_pep = "SELL"
+                            action_ko = "BUY"
+
+                        exit_df = pd.concat(
+                            [exit_df, pd.DataFrame(
+                                {
+                                    "DATE": [full_signal.index[row + 1]],
+                                    "SYMBOL": [entry_orders.iloc[i]['SYMBOL']],
+                                    "ACTION": [action_pep],
+                                    "SIZE": [entry_orders.iloc[i]['SIZE']],
+                                    "PRICE": [price_p],
+                                    "TRIP": ["Exit"],
+                                    "LMT_PRICE": ['N/A'],
+                                    "STATUS": ['FILLED']
+                                }
+                            )]
+                        )
+                        exit_df = pd.concat(
+                            [exit_df, pd.DataFrame(
+                                {
+                                    "DATE": [full_signal.index[row + 1]],
+                                    "SYMBOL": [entry_orders.iloc[i+1]['SYMBOL']],
+                                    "ACTION": [action_ko],
+                                    "SIZE": [entry_orders.iloc[i+1]['SIZE']],
+                                    "PRICE": [price_k],
+                                    "TRIP": ['Exit'],
+                                    "LMT_PRICE": ['N/A'],
+                                    "STATUS": ['FILLED']
+                                }
+                            )]
+
+                        )
+                        break;
+
+    exit_df.set_index("DATE", inplace=True)
+    return exit_df
 
 
 historical_price_data = onboard_historical_price_data('pep_ko_ivv.csv')
 hpd_w_spread = get_spread(historical_price_data, 'pep', 'ko')
 bbands = get_bolling_band(hpd_w_spread, 20, 2, 'pep', 'ko')
 full_signal = get_full_signal(bbands)
-full_signal.to_csv('../signal.csv')
+full_signal.to_csv('signal.csv')
 entry_orders = calculate_entry_orders(full_signal, 'pep', 'ko', 1000, 1000,
                                       'N/A', 'FILLED', 'N/A', 'FILLED')
-entry_orders.to_csv('../entry_orders.csv')
+exit_orders = calculate_exit_orders(entry_orders, full_signal, 20, 0.3)
 
+whole_df = pd.concat([entry_orders, exit_orders])
+whole_df.sort_index(ascending=True, inplace=True)
+print(whole_df)
+
+whole_df.to_csv("whole_process")
 # MAGIKARP's ASSIGMENT:
 # 1) write calculate_exit_orders() so that the following code works. (must have)
 # 2) Make yourself a cool background, or a logo, or something with a Magikarp
 # in it. I'll work that into your website :) (optional)
 
-timeout = 20
-stoploss = 0.3
-exit_orders = calculate_exit_orders(entry_orders, historical_price_data, timeout, stoploss)
-exit_orders.to_csv('../exit_orders.csv')
+# timeout = 20
+# stoploss = 0.3
+# exit_orders = calculate_exit_orders(entry_orders, historical_price_data, timeout, stoploss)
+# exit_orders.to_csv('exit_orders.csv')
 
 # pd.concat() exit orders and entry orders by ROW, sort by date... and that's
 # your blotter. a complete record of trades you WOULD have made.
